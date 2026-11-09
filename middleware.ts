@@ -6,38 +6,45 @@ export async function middleware(request: NextRequest) {
     request,
   })
 
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll()
-        },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value, options }) => request.cookies.set(name, value))
-          supabaseResponse = NextResponse.next({
-            request,
-          })
-          cookiesToSet.forEach(({ name, value, options }) =>
-            supabaseResponse.cookies.set(name, value, options)
-          )
-        },
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+
+  // حماية ضد غياب المتغيرات لتجنب خطأ الـ 500 المباشر
+  if (!supabaseUrl || !supabaseAnonKey) {
+    return supabaseResponse
+  }
+
+  const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
+    cookies: {
+      getAll() {
+        return request.cookies.getAll()
       },
+      setAll(cookiesToSet) {
+        cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value))
+        supabaseResponse = NextResponse.next({
+          request,
+        })
+        cookiesToSet.forEach(({ name, value, options }) =>
+          supabaseResponse.cookies.set(name, value, options)
+        )
+      },
+    },
+  })
+
+  try {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+
+    const url = request.nextUrl.clone()
+
+    if (!user && (url.pathname.startsWith('/dashboard') || url.pathname.startsWith('/bookings'))) {
+      url.pathname = '/login'
+      return NextResponse.redirect(url)
     }
-  )
-
-  // تحديث الجلسة والتأكد من تسجيل الدخول
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-
-  const url = request.nextUrl.clone()
-
-  // حماية مسارات الداشبورد وإعادة توجيه غير المرخصين
-  if (!user && (url.pathname.startsWith('/dashboard') || url.pathname.startsWith('/bookings'))) {
-    url.pathname = '/login'
-    return NextResponse.redirect(url)
+  } catch (e) {
+    // تجاوز أي خطأ مؤقت في الاتصال لمنع توقف الموقع
+    console.error('Middleware execution error:', e)
   }
 
   return supabaseResponse
